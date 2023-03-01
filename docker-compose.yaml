@@ -1,0 +1,26 @@
+version: '3.1'
+
+services:
+  mongo:
+    image: mongo
+    restart: unless-stopped
+    ports:
+      - 27017:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: "${DOCKER_MONGO_USER}"
+      MONGO_INITDB_ROOT_PASSWORD: "${DOCKER_MONGO_PWD}"
+    volumes:
+      - mdata:/data/db
+
+  mongo-express:
+    image: mongo-express
+    restart: unless-stopped
+    ports:
+      - 8081:8081
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: mongo
+      ME_CONFIG_MONGODB_ADMINPASSWORD: "${DOCKER_MONGO_PWD}"
+      ME_CONFIG_MONGODB_URL: "${API_DATABASE_URL}"
+
+volumes:
+  mdata:
