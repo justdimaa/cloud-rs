@@ -10,7 +10,7 @@ This project is currently under development and not yet ready for use in any env
 1. Create a `.env` file in the workspace directory, with the following variables:
 ```
 # client
-DATABASE_URL=sqlite:///path/to/local/.sync.db # only required for client builds
+DATABASE_URL=sqlite://cloud-desktop/sync.db # only required for client builds
 
 # api
 API_DATABASE_URL=mongodb://root:yourmongopassword@localhost:27017
