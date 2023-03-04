@@ -1,3 +1,7 @@
+use argon2::{
+    password_hash::{rand_core::OsRng, SaltString},
+    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
+};
 use cloud_proto::proto::{
     auth_service_server::AuthService, AuthLoginRequest, AuthLoginResponse, AuthRegisterRequest,
     AuthRegisterResponse,
@@ -24,12 +28,24 @@ impl AuthService for MyAuthService {
         &self,
         request: Request<AuthRegisterRequest>,
     ) -> Result<Response<AuthRegisterResponse>, Status> {
+        let argon = Argon2::default();
+        let salt = SaltString::generate(&mut OsRng);
+        let passhash = argon.hash_password(request.get_ref().password.as_bytes(), &salt);
+
+        let passhash = match passhash {
+            Ok(p) => p.to_string(),
+            Err(e) => {
+                tracing::error!("failed to hash password: {:?}", e);
+                return Err(Status::internal(e.to_string()));
+            }
+        };
+
         let db_user = DbUser {
             id: ObjectId::new(),
             email: request.get_ref().email.to_lowercase(),
             username: request.get_ref().username.to_owned(),
-            passhash: request.get_ref().password.to_owned(), // TODO: use argon2
-            max_storage: 1073741824,                         // 10gb
+            passhash,
+            max_storage: 1073741824, // 10gb
         };
 
         let db = self.mongo.database("cloud");
@@ -62,7 +78,12 @@ impl AuthService for MyAuthService {
             .map_err(|e| Status::internal(e.to_string()))?
             .ok_or(Status::unauthenticated("invalid credentials"))?;
 
-        if db_user.passhash != request.get_ref().password {
+        let parsed_hash = PasswordHash::new(&db_user.passhash)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let verified = Argon2::default().verify_password(request.get_ref().password.as_bytes(), &parsed_hash);
+
+        if verified.is_err() {
             return Err(Status::unauthenticated("invalid credentials"));
         }
 
