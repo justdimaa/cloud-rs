@@ -14,7 +14,8 @@ DATABASE_URL=sqlite://cloud-desktop/sync.db # only required for client builds
 
 # api
 API_DATABASE_URL=mongodb://root:yourmongopassword@localhost:27017
-API_URL=[::1]:50051
+API_ENDPOINT=[::1]:50051
+API_USER_STORAGE_QUOTA=1073741824 # 10 GiB
 
 # docker
 DOCKER_MONGO_USER=root

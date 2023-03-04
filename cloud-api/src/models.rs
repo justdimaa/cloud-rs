@@ -10,7 +10,19 @@ pub struct DbUser {
     pub email: String,
     pub username: String,
     pub passhash: String,
-    pub max_storage: u64,
+    pub storage_quota: Option<u64>,
+    pub storage_used: u64,
+}
+
+impl DbUser {
+    pub fn to_proto(&self) -> proto::User {
+        proto::User {
+            id: self.id.to_string(),
+            username: self.username.to_string(),
+            storage_quota: self.storage_quota,
+            storage_used: self.storage_used,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -11,7 +11,7 @@ use tonic::transport::{Channel, Uri};
 use crate::{
     config, global_state,
     services::{
-        api_service::{AuthApiService, FileApiService},
+        api_service::{AuthApiService, FileApiService, UserApiService},
         database_service::DatabaseService,
     },
 };
@@ -31,6 +31,7 @@ struct SetupData<'a> {
 
     sync_dir_set: &'a AtomState<Option<String>>,
     database_service: &'a AtomState<Option<Arc<DatabaseService>>>,
+    user_api_service: &'a AtomState<Option<Arc<Mutex<UserApiService>>>>,
     file_api_service: &'a AtomState<Option<Arc<Mutex<FileApiService>>>>,
     api_channel: &'a AtomState<Option<Channel>>,
 }
@@ -66,6 +67,7 @@ pub fn Setup(cx: Scope) -> Element {
         // access_token: use_atom_state(cx, global_state::ACCESS_TOKEN),
         sync_dir_set: use_atom_state(cx, global_state::SYNC_DIR),
         database_service: use_atom_state(cx, global_state::DATABASE_SERVICE),
+        user_api_service: use_atom_state(cx, global_state::USER_API_SERVICE),
         file_api_service: use_atom_state(cx, global_state::FILE_API_SERVICE),
         api_channel: use_atom_state(cx, global_state::API_CHANNEL),
     };
@@ -81,7 +83,7 @@ pub fn Setup(cx: Scope) -> Element {
                             onsubmit: move |e| { on_submit_url(cx, data, e) },
                             class: "space-y-6",
                             h5 {
-                                class: "text-xl font-bold leading-none text-gray-900",
+                                class: "text-xl font-medium text-gray-900 dark:text-white",
                                 "Sign in"
                             },
                             div {
@@ -118,7 +120,7 @@ pub fn Setup(cx: Scope) -> Element {
                             div {
                                 class: "flex items-center justify-between mb-4",
                                 h5 {
-                                    class: "text-xl font-bold leading-none text-gray-900",
+                                    class: "text-xl font-medium text-gray-900 dark:text-white",
                                     "Sign in"
                                 }
                                 button {
@@ -187,7 +189,7 @@ pub fn Setup(cx: Scope) -> Element {
                             div {
                                 class: "flex items-center justify-between mb-4",
                                 h5 {
-                                    class: "text-xl font-bold leading-none text-gray-900",
+                                    class: "text-xl font-medium text-gray-900 dark:text-white",
                                     "Create an account"
                                 }
                                 button {
@@ -265,7 +267,7 @@ pub fn Setup(cx: Scope) -> Element {
                             div {
                                 class: "flex items-center justify-between mb-4",
                                 h5 {
-                                    class: "text-xl font-bold leading-none text-gray-900",
+                                    class: "text-xl font-medium text-gray-900 dark:text-white",
                                     "Select the directory"
                                 }
                                 button {
@@ -374,6 +376,7 @@ fn on_submit_login(cx: Scope, data: SetupData, event: Event<FormData>) {
     let error_status = data.error_status.clone();
     let is_loading = data.is_loading.clone();
     let step = data.step.clone();
+    let user_api_service = data.user_api_service.clone();
     let file_api_service = data.file_api_service.clone();
 
     if let Ok(mut auth_client) = auth_client {
@@ -398,6 +401,11 @@ fn on_submit_login(cx: Scope, data: SetupData, event: Event<FormData>) {
                         if let Err(e) = conf_res {
                             tracing::error!("failed to modify config {:?}", e);
                         }
+
+                        user_api_service.set(Some(Arc::new(Mutex::new(UserApiService::new(
+                            channel.clone(),
+                            login_res.access_token.to_owned(),
+                        )))));
 
                         file_api_service.set(Some(Arc::new(Mutex::new(FileApiService::new(
                             channel.clone(),
@@ -431,6 +439,7 @@ fn on_submit_register(cx: Scope, data: SetupData, event: Event<FormData>) {
     let error_status = data.error_status.clone();
     let is_loading = data.is_loading.clone();
     let step = data.step.clone();
+    let user_api_service = data.user_api_service.clone();
     let file_api_service = data.file_api_service.clone();
 
     if let Ok(mut auth_client) = auth_client {
@@ -456,6 +465,11 @@ fn on_submit_register(cx: Scope, data: SetupData, event: Event<FormData>) {
                         if let Err(e) = conf_res {
                             tracing::error!("failed to modify config {:?}", e);
                         }
+
+                        user_api_service.set(Some(Arc::new(Mutex::new(UserApiService::new(
+                            channel.clone(),
+                            register_res.access_token.to_owned(),
+                        )))));
 
                         file_api_service.set(Some(Arc::new(Mutex::new(FileApiService::new(
                             channel.clone(),

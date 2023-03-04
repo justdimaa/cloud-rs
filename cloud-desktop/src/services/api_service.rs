@@ -2,6 +2,7 @@ use std::path::Path;
 
 use cloud_proto::proto::{
     self, auth_service_client::AuthServiceClient, file_service_client::FileServiceClient,
+    user_service_client::UserServiceClient,
 };
 use futures::StreamExt;
 use tokio::{fs, io::AsyncWriteExt};
@@ -47,6 +48,33 @@ impl AuthApiService {
 
     pub fn get_client(&mut self) -> &mut AuthServiceClient<Channel> {
         &mut self.client
+    }
+}
+
+pub struct UserApiService {
+    client: UserServiceClient<InterceptedService<Channel, AuthInterceptor>>,
+}
+
+impl UserApiService {
+    pub fn new(channel: Channel, access_token: String) -> UserApiService {
+        UserApiService {
+            client: UserServiceClient::with_interceptor(
+                channel,
+                AuthInterceptor::new(access_token),
+            ),
+        }
+    }
+
+    pub fn get_client(
+        &mut self,
+    ) -> &mut UserServiceClient<InterceptedService<Channel, AuthInterceptor>> {
+        &mut self.client
+    }
+
+    pub async fn get_self(&mut self) -> Result<proto::User, anyhow::Error> {
+        let get_res = self.client.get_self(()).await?;
+
+        Ok(get_res.into_inner())
     }
 }
 

@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use cloud_proto::proto::{
     auth_service_server::AuthServiceServer, file_service_server::FileServiceServer,
     user_service_server::UserServiceServer,
@@ -7,36 +5,40 @@ use cloud_proto::proto::{
 use mongodb::bson::doc;
 use tonic::transport::Server;
 
-use crate::services::{auth::MyAuthService, file::MyFileService, user::MyUserService};
+use crate::{
+    config::Configuration,
+    services::{auth::MyAuthService, file::MyFileService, user::MyUserService},
+};
 
 mod auth_token;
+mod config;
 mod models;
 mod services;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), anyhow::Error> {
     dotenvy::dotenv().ok();
     tracing_subscriber::fmt::init();
 
-    let db_url = dotenvy::var("API_DATABASE_URL")?;
-    let addr = dotenvy::var("API_URL")?.parse()?;
+    let config = Configuration::from_env()?;
 
     tracing::info!("Connecting to database");
-
-    let mongo = mongodb::Client::with_uri_str(&db_url).await?;
+    let mongo = mongodb::Client::with_uri_str(&config.database_url).await?;
 
     mongo
         .database("cloud")
         .run_command(doc! {"ping": 1}, None)
         .await?;
 
-    tracing::info!("Server listening on {}", addr);
-
+    tracing::info!("Server listening on {}", &config.server_endpoint);
     Server::builder()
-        .add_service(AuthServiceServer::new(MyAuthService::new(mongo.clone())))
+        .add_service(AuthServiceServer::new(MyAuthService::new(
+            config.clone(),
+            mongo.clone(),
+        )))
         .add_service(UserServiceServer::new(MyUserService::new(mongo.clone())))
         .add_service(FileServiceServer::new(MyFileService::new(mongo.clone())))
-        .serve(addr)
+        .serve(config.server_endpoint.clone())
         .await?;
 
     Ok(())

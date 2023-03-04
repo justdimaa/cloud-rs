@@ -9,16 +9,17 @@ use cloud_proto::proto::{
 use mongodb::bson::{doc, oid::ObjectId};
 use tonic::{Request, Response, Status};
 
-use crate::{auth_token, models::DbUser};
+use crate::{auth_token, config::Configuration, models::DbUser};
 
 #[derive(Debug)]
 pub struct MyAuthService {
+    config: Configuration,
     mongo: mongodb::Client,
 }
 
 impl MyAuthService {
-    pub fn new(mongo: mongodb::Client) -> Self {
-        Self { mongo }
+    pub fn new(config: Configuration, mongo: mongodb::Client) -> Self {
+        Self { config, mongo }
     }
 }
 
@@ -45,7 +46,8 @@ impl AuthService for MyAuthService {
             email: request.get_ref().email.to_lowercase(),
             username: request.get_ref().username.to_owned(),
             passhash,
-            max_storage: 1073741824, // 10gb
+            storage_quota: Some(self.config.user_storage_quota),
+            storage_used: 0,
         };
 
         let db = self.mongo.database("cloud");
@@ -78,10 +80,11 @@ impl AuthService for MyAuthService {
             .map_err(|e| Status::internal(e.to_string()))?
             .ok_or(Status::unauthenticated("invalid credentials"))?;
 
-        let parsed_hash = PasswordHash::new(&db_user.passhash)
-            .map_err(|e| Status::internal(e.to_string()))?;
+        let parsed_hash =
+            PasswordHash::new(&db_user.passhash).map_err(|e| Status::internal(e.to_string()))?;
 
-        let verified = Argon2::default().verify_password(request.get_ref().password.as_bytes(), &parsed_hash);
+        let verified =
+            Argon2::default().verify_password(request.get_ref().password.as_bytes(), &parsed_hash);
 
         if verified.is_err() {
             return Err(Status::unauthenticated("invalid credentials"));

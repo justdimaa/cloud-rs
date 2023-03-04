@@ -1,20 +1,16 @@
 syntax = "proto3";
 
-import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
 
 package user;
 
 service UserService {
-    rpc Get(UserGetRequest) returns (User);
-}
-
-message UserGetRequest {
-    string id = 1;
+    rpc GetSelf(google.protobuf.Empty) returns (User);
 }
 
 message User {
     string id = 1;
-    string email = 2;
-    string username = 3;
-    google.protobuf.Timestamp created_at = 7;
+    string username = 2;
+    optional uint64 storage_quota = 3;
+    uint64 storage_used = 4;
 }

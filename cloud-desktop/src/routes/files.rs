@@ -13,7 +13,7 @@ use crate::{
     global_state,
     path_helper::{self, FilePath},
     services::{
-        api_service::FileApiService,
+        api_service::{FileApiService, UserApiService},
         database_service::{DatabaseService, DbFile},
     },
 };
@@ -38,16 +38,20 @@ pub fn Files(cx: Scope) -> Element {
     let sync_dir = fermi::use_read(cx, global_state::SYNC_DIR)
         .as_ref()
         .unwrap();
+    let storage_space = use_state(cx, || "".to_string());
     let db_service = fermi::use_atom_state(cx, global_state::DATABASE_SERVICE);
+    let user_service = fermi::use_atom_state(cx, global_state::USER_API_SERVICE);
     let file_service = fermi::use_atom_state(cx, global_state::FILE_API_SERVICE);
     let files = fermi::use_atom_ref(cx, global_state::FILES);
     let coroutine_handle = use_coroutine(cx, |rx: UnboundedReceiver<HandleFileCommand>| {
         handle_file_coroutine(
             rx,
             db_service.get().as_ref().unwrap().clone(),
+            user_service.get().as_ref().unwrap().clone(),
             file_service.get().as_ref().unwrap().clone(),
             files.clone(),
             sync_dir.clone(),
+            storage_space.clone(),
         )
     });
 
@@ -66,10 +70,17 @@ pub fn Files(cx: Scope) -> Element {
             class: "w-full h-full p-4 bg-white sm:p-8 dark:bg-gray-800",
             div {
                 class: "flex items-center justify-between mb-4",
-                h5 {
-                    class: "text-xl font-medium text-gray-900 dark:text-white",
-                    "Files"
-                },
+                div {
+                    class: "flex-1 min-w-0",
+                    h5 {
+                        class: "text-xl font-medium text-gray-900 dark:text-white",
+                        "Files"
+                    },
+                    p {
+                        class: "text-sm text-gray-500 truncate dark:text-gray-400",
+                        "{storage_space}"
+                    }
+                }
                 button {
                     onclick: |_| {
                         coroutine_handle.send(
@@ -103,17 +114,28 @@ pub fn Files(cx: Scope) -> Element {
 async fn handle_file_coroutine<P>(
     mut rx: UnboundedReceiver<HandleFileCommand>,
     db_service: Arc<DatabaseService>,
+    user_service: Arc<Mutex<UserApiService>>,
     file_service: Arc<Mutex<FileApiService>>,
     files: UseAtomRef<BTreeMap<String, FileElementProps>>,
     sync_dir: P,
+    storage_space: UseState<String>,
 ) where
     P: AsRef<Path>,
 {
     while let Some(cmd) = rx.next().await {
         match cmd {
             HandleFileCommand::Refresh => {
+                let mut user_service = user_service.lock().await;
                 let mut file_service = file_service.lock().await;
-                on_refresh(&db_service, &mut file_service, &files, &sync_dir).await;
+                on_refresh(
+                    &db_service,
+                    &mut user_service,
+                    &mut file_service,
+                    &files,
+                    &sync_dir,
+                    &storage_space,
+                )
+                .await;
             }
             HandleFileCommand::Skip(path) => {
                 let mut files = files.write();
@@ -226,9 +248,11 @@ async fn handle_file_coroutine<P>(
 
 async fn on_refresh<P>(
     db_service: &DatabaseService,
+    user_service: &mut UserApiService,
     file_service: &mut FileApiService,
     files: &UseAtomRef<BTreeMap<String, FileElementProps>>,
     sync_dir: P,
+    storage_space: &UseState<String>,
 ) where
     P: AsRef<Path>,
 {
@@ -240,6 +264,24 @@ async fn on_refresh<P>(
     sync_api_files(db_service, file_service, files, &sync_dir)
         .await
         .ok();
+
+    match user_service.get_self().await {
+        Ok(u) => {
+            let cur = byte_unit::Byte::from_bytes(u.storage_used.into()).get_appropriate_unit(true);
+
+            let max = match u.storage_quota {
+                Some(storage_quota) => byte_unit::Byte::from_bytes(storage_quota.into())
+                    .get_appropriate_unit(true)
+                    .to_string(),
+                None => "∞".to_string(),
+            };
+
+            storage_space.set(format!("{} / {} used", cur, max))
+        }
+        Err(e) => {
+            storage_space.set(e.to_string());
+        }
+    }
 }
 
 async fn sync_local_files<P>(

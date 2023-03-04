@@ -8,12 +8,15 @@ use cloud_proto::proto::{
 use futures_util::{AsyncWriteExt, StreamExt};
 use mongodb::{
     bson::{doc, oid::ObjectId},
-    options::GridFsUploadOptions,
+    options::{GridFsUploadOptions, UpdateOptions},
 };
 use tokio_util::{compat::FuturesAsyncReadCompatExt, io::ReaderStream};
 use tonic::{codegen::futures_core::Stream, Request, Response, Status, Streaming};
 
-use crate::{auth_token, models::DbFile};
+use crate::{
+    auth_token,
+    models::{DbFile, DbUser},
+};
 
 #[derive(Debug)]
 pub struct MyFileService {
@@ -38,7 +41,19 @@ impl FileService for MyFileService {
         let user_id = auth_token::get_user_id_from_request(&request)?;
 
         let db = self.mongo.database("cloud");
+        let db_users = db.collection::<DbUser>("users");
         let db_files = db.collection::<DbFile>("files");
+
+        let db_user = db_users
+            .find_one(doc! { "_id": user_id }, None)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        let db_user = match db_user {
+            Some(u) => u,
+            None => return Err(Status::failed_precondition("could not find user")),
+        };
+
         let bucket = db.gridfs_bucket(None);
 
         let mut client_stream = request.into_inner();
@@ -60,6 +75,12 @@ impl FileService for MyFileService {
                         return Err(Status::invalid_argument("file meta already sent"));
                     }
 
+                    if let Some(storage_quota) = db_user.storage_quota {
+                        if db_user.storage_used + info.size > storage_quota {
+                            return Err(Status::resource_exhausted("user storage quota exceeded"));
+                        }
+                    }
+
                     let path = Path::new(&info.path);
 
                     if !path.is_absolute() {
@@ -76,7 +97,7 @@ impl FileService for MyFileService {
 
                             if file_name.to_string_lossy().starts_with(".~download~") {
                                 return Err(Status::invalid_argument(
-                                    "file name can start with .~download~",
+                                    "file name can not start with .~download~",
                                 ));
                             }
                         }
@@ -103,14 +124,24 @@ impl FileService for MyFileService {
                     client_file_info = Some(info);
                 }
                 Upload::Chunk(bytes) => {
-                    if client_file_info.is_none() {
-                        return Err(Status::invalid_argument(
-                            "file meta must be sent before data",
+                    let info = match &client_file_info {
+                        Some(i) => i,
+                        None => {
+                            return Err(Status::invalid_argument(
+                                "file metadata must be sent before the byte stream",
+                            ))
+                        }
+                    };
+
+                    size += bytes.len();
+
+                    if size as u64 > info.size {
+                        return Err(Status::aborted(
+                            "uploaded file size exceeds the announced file size",
                         ));
                     }
 
                     hasher.update(&bytes);
-                    size += bytes.len();
 
                     bucket_stream
                         .as_mut()
@@ -190,6 +221,15 @@ impl FileService for MyFileService {
                 db_file = Some(new_db_file);
             }
         }
+
+        db_users
+            .update_one(
+                doc! { "_id": user_id },
+                doc! { "$inc": { "storage_used": client_file_info.size as i64 } },
+                UpdateOptions::builder().upsert(Some(true)).build(),
+            )
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
 
         tracing::debug!(
             "uploaded file {} with hash {}",
@@ -299,6 +339,7 @@ impl FileService for MyFileService {
             .map_err(|_| Status::invalid_argument("invalid id"))?;
 
         let db = self.mongo.database("cloud");
+        let db_users = db.collection::<DbUser>("users");
         let db_files = db.collection::<DbFile>("files");
 
         let db_file = db_files
@@ -316,6 +357,15 @@ impl FileService for MyFileService {
 
         db_files
             .delete_one(doc! { "_id": file_id, "owner_id": user_id }, None)
+            .await
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        db_users
+            .update_one(
+                doc! { "_id": user_id },
+                doc! { "$inc": { "storage_used": -(db_file.size as i64) } },
+                UpdateOptions::builder().upsert(Some(true)).build(),
+            )
             .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
